@@ -1,0 +1,14 @@
+# Build files
+.pio
+.vscode
+
+# Output files
+externals
+imu_data
+imu_data-v1
+outputs
+*.txt
+
+# Testing files
+filters.ipynb
+serial_logger.py
