@@ -25,10 +25,10 @@
 // =============================================================================
 
 struct IMUData{
-    uint32_t time;     // micros() at read time (was float: loses precision)
+    uint32_t time;     // micros() at read time
     xyzFloat acc;      // [g]
     xyzFloat gyr;      // [deg/s]
-    xyzFloat mag;      // [uT]; (0,0,0) for the MPU6500
+    xyzFloat mag;      // [uT]; (0,0,0) for the MPU6500 because it has no magnetometer
 };
 
 struct quaternion {

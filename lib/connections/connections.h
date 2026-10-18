@@ -10,7 +10,6 @@
 // Initialise both IMUs on their own SPI bus and apply the settings
 // (DLPF 4, gyro +-500 dps, acc +-2 g, magnetometer 100 Hz).
 // Returns false if an IMU does not answer. A missing AK8963 only disables magnetometer use.
-// (was `void MPUInit()` : it could not report a failure)
 bool MPUInit();
 
 // Read both IMUs back to back. Units: g, deg/s, uT (raw AK8963 axes, not calibrated).

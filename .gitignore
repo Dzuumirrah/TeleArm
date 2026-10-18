@@ -12,3 +12,4 @@ outputs
 # Testing files
 filters.ipynb
 serial_logger.py
+src/mpuWhoAmI/

@@ -8,6 +8,7 @@
 void setup() {
   Serial.begin(115200);
   delay(300);
+  delay(10000);  
   Serial.println("TeleArm master");
   sessionBegin();
 }

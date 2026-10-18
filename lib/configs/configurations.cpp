@@ -11,7 +11,7 @@ const int mosiPin_9250 = 12;
 const int misoPin_9250 = 14;
 const int sckPin_9250 = 13;
 
-const int btn_cal = 26;
+const int btn_cal = 26;     //   
 const int vibration_motor = 25;
 
 const bool useSPI = true;
@@ -45,11 +45,11 @@ const float    CAL_STILL_GYRO_DPS = 3.0f;
 const float    CAL_SETTLE_TILT_DEG = 1.5f;
 const float    QUICK_POSE_TOL_DEG = 10.0f;
 
-// Human arm (placeholders; paper Table 5: upper arm 0.28, forearm 0.25 + hand 0.10 + index 0.085)
+// Human arm (in metres; placeholders; paper Table 5: upper arm 0.28, forearm 0.25 + hand 0.10 + index 0.085)
 const float HUMAN_UPPER_ARM_LEN = 0.28f;
 const float HUMAN_ELBOW_TO_TIP_LEN = 0.43f;
 
-// Robot (placeholders)
+// Robot (in metres; placeholders)
 const float ROBOT_BASE_HEIGHT = 0.10f;
 const float ROBOT_LINK1_LEN = 0.30f;
 const float ROBOT_LINK2_LEN = 0.30f;
@@ -62,7 +62,7 @@ const float JOINT_MAX_DEG[3] = {  90.0f, 120.0f, 150.0f };
 const float MAX_JOINT_RATE_DPS = 180.0f;
 
 // ESP-NOW --------------------------------------------------
-const uint8_t SLAVE_MAC[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+const uint8_t SLAVE_MAC[6] = { 0xD4, 0x8A, 0xFC, 0x60, 0x49, 0xBC };
 const uint8_t ESPNOW_CHANNEL = 1;
 
 // Debug ----------------------------------------------------

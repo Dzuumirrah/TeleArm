@@ -30,7 +30,7 @@ IMUData obtainIMUData(MPU6500_WE &mpu) {
     d.time = micros();
     d.acc = mpu.getGValues();
     d.gyr = mpu.getGyrValues();
-    d.mag = xyzFloat(0.0f, 0.0f, 0.0f);
+    d.mag = xyzFloat(0.0f, 0.0f, 0.0f); // Zero value because mpu6500 has no magnetometer.
     return d;
 }
 
