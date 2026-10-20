@@ -1,5 +1,7 @@
 # TeleArm master firmware — design notes and decisions
 
+See also [`ARCHITECTURE.md`](ARCHITECTURE.md) for the layer diagram and the function-by-function reference of `session.cpp`.
+
 Status: written and tested **on a PC only** (host simulation). It has **not** been compiled with PlatformIO or run on the
 ESP32 / real IMUs yet (the build sandbox could not download the PlatformIO packages). Treat the first flash as a bring-up.
 

@@ -25,7 +25,7 @@ static size_t consumed = 0;
 struct Rec { float t; float j[3]; float e[3]; float tipErrMm; uint8_t flags; uint8_t seq; uint32_t t_us; float hd[3]; float hdT[3]; };
 static std::vector<Rec> recs;
 static int badPackets = 0, seqGaps = 0;
-static bool haveSeq = false; static uint8_t lastSeq = 0;
+static bool haveSeq = false; static uint16_t lastSeq = 0;
 
 static void expectedJoints(const Mat3 &up, const Mat3 &fo, float out[3]) {
     axisVector u = calculateAxisVector(quaternionFromRotation(up)), f = calculateAxisVector(quaternionFromRotation(fo));
@@ -42,7 +42,7 @@ static void drain() {
         const std::vector<uint8_t> &b = g_espnowSent[consumed++];
         if (!packetValid(b.data(), (int)b.size()) || b.size() != sizeof(JointPacket)) { badPackets++; continue; }
         JointPacket p; memcpy(&p, b.data(), sizeof(p));
-        if (haveSeq && (uint8_t)(p.seq - lastSeq) != 1) seqGaps++;
+        if (haveSeq && (uint16_t)(p.seq - lastSeq) != 1) seqGaps++;
         haveSeq = true; lastSeq = p.seq;
         Rec r; r.t = (float)nowUs * 1e-6f; r.flags = p.flags; r.seq = p.seq; r.t_us = p.t_us;
         for (int i = 0; i < 3; i++) r.j[i] = p.joint_deg[i];
