@@ -11,7 +11,7 @@
 static volatile bool     g_new = false;
 static JointPacket       g_pkt;
 static volatile uint32_t g_ok = 0, g_bad = 0, g_lost = 0;
-static uint8_t           g_lastSeq = 0;
+static uint16_t          g_lastSeq = 0;
 static bool              g_haveSeq = false;
 
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -22,7 +22,7 @@ static void onRecv(const uint8_t *, const uint8_t *data, int len) {
     if (!packetValid(data, len)) { g_bad++; return; }
     JointPacket p;
     memcpy(&p, data, sizeof(p));
-    if (g_haveSeq) g_lost += (uint8_t)(p.seq - g_lastSeq - 1);
+    if (g_haveSeq) g_lost += (uint16_t)(p.seq - g_lastSeq - 1);
     g_lastSeq = p.seq; g_haveSeq = true;
     g_pkt = p; g_new = true; g_ok++;
 }

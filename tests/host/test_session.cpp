@@ -25,7 +25,7 @@ static size_t consumed = 0;
 struct Rec { float t; float j[3]; float e[3]; float tipErrMm; uint8_t flags; uint8_t seq; uint32_t t_us; float hd[3]; float hdT[3]; };
 static std::vector<Rec> recs;
 static int badPackets = 0, seqGaps = 0;
-static bool haveSeq = false; static uint8_t lastSeq = 0;
+static bool haveSeq = false; static uint16_t lastSeq = 0;
 
 static void expectedJoints(const Mat3 &up, const Mat3 &fo, float out[3]) {
     axisVector u = calculateAxisVector(quaternionFromRotation(up)), f = calculateAxisVector(quaternionFromRotation(fo));
@@ -42,7 +42,7 @@ static void drain() {
         const std::vector<uint8_t> &b = g_espnowSent[consumed++];
         if (!packetValid(b.data(), (int)b.size()) || b.size() != sizeof(JointPacket)) { badPackets++; continue; }
         JointPacket p; memcpy(&p, b.data(), sizeof(p));
-        if (haveSeq && (uint8_t)(p.seq - lastSeq) != 1) seqGaps++;
+        if (haveSeq && (uint16_t)(p.seq - lastSeq) != 1) seqGaps++;
         haveSeq = true; lastSeq = p.seq;
         Rec r; r.t = (float)nowUs * 1e-6f; r.flags = p.flags; r.seq = p.seq; r.t_us = p.t_us;
         for (int i = 0; i < 3; i++) r.j[i] = p.joint_deg[i];
@@ -417,6 +417,32 @@ int main(int argc, char **argv) {
             joints tj = calculateJointAngles(u, f);
             printf("t=%.1f truth a%.1f b%.1f d%.1f | est a%.1f b%.1f d%.1f\n", trajT, tj.joint_a, tj.joint_b, tj.joint_d, h.joint_a, h.joint_b, h.joint_d);
         }
+        return 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "csv") {          // dummy data set: csv <out.csv>
+        const char *outPath = argc > 2 ? argv[2] : "telearm_dummy_packets.csv";
+        clearStorage(); setupWorld(true); recs.clear(); bootDevice(); run(1);
+        shimSetPin(btn_cal, LOW); run(6.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+        for (int i = 0; i < 25 * 200 && sessionState() == ST_MAG_CAL; i++) tumble(0.005f);
+        if (!fullSequence(pose1(), pose2())) { printf("calibration failed\n"); return 1; }
+        struct Pz { float a, b, d, tw, pr; const char *name; };
+        const Pz poses[] = { { 10, 0, 90, 0, 0, "ready" }, { 75, 10, 15, 5, 0, "reach_forward" }, { 40, 65, 70, -8, 10, "side_raise" }, { 55, -10, 40, 0, -10, "reach_low" } };
+        auto mk = [](const Pz &z, Mat3 &u, Mat3 &f) { u = upperTruth(D2R(z.a), D2R(z.b), D2R(z.tw)); f = foreTruth(u, D2R(z.d), D2R(z.pr)); };
+        Mat3 u, f; mk(poses[0], u, f); glideTo(u, f, 2.0f); run(3.0f);          // settle in the first pose (not recorded)
+        size_t start = g_espnowSent.size();
+        struct Seg { int pose; float hold, move; };
+        const Seg plan[] = { { 0, 1.0f, 0 }, { 1, 1.2f, 1.6f }, { 2, 1.2f, 1.6f }, { 3, 1.2f, 1.6f }, { 0, 1.0f, 1.8f } };
+        for (const Seg &sg : plan) { mk(poses[sg.pose], u, f); if (sg.move > 0) glideTo(u, f, sg.move); run(sg.hold); }
+        FILE *fo = fopen(outPath, "w");
+        fprintf(fo, "row,seq,t_us,joint0_base_deg,joint1_shoulder_deg,joint2_elbow_deg,qu_w,qu_x,qu_y,qu_z,qf_w,qf_x,qf_y,qf_z,flags,crc\n");
+        int row = 0;
+        for (size_t i = start; i < g_espnowSent.size() && row < 100; i += 5, row++) {
+            JointPacket p; memcpy(&p, g_espnowSent[i].data(), sizeof(p));
+            fprintf(fo, "%d,%u,%u,%.3f,%.3f,%.3f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%u,%u\n", row, p.seq, p.t_us, p.joint_deg[0], p.joint_deg[1], p.joint_deg[2],
+                    p.q_upper[0], p.q_upper[1], p.q_upper[2], p.q_upper[3], p.q_fore[0], p.q_fore[1], p.q_fore[2], p.q_fore[3], p.flags, p.crc);
+        }
+        fclose(fo);
+        printf("wrote %d rows from %d packets\n", row, (int)(g_espnowSent.size() - start));
         return 0;
     }
     if (argc > 1 && std::string(argv[1]) == "probe9") {
