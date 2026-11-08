@@ -23,6 +23,11 @@ bool magnetometerAvailable();
 // Offsets are stored in flash and re-applied by MPUInit().
 bool benchCalibrateIMUs();
 
+// Blink the built-in LED at a fixed interval. The LED is used to indicate various states (e.g., calibration, errors).
+// @param lastBlinkMs: the last time the LED was toggled (in milliseconds).
+// @param on: whether the LED should be on or off.
+// @param type: the type of blink (can be used to indicate different states). 0, slow, 1 = normal, 2 = fast
+void LEDBlink(bool on, uint32_t lastBlinkMs = 0, uint8_t type = 0);
 // =============================================================================
 //  Flash storage (NVS)                            (storage.cpp)
 // =============================================================================

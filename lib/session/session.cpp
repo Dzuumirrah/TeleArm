@@ -411,12 +411,15 @@ void sessionStep() {
     if (!readIMUs(raw[0], raw[1])) {
         faultCooldown = FAULT_FLAG_TICKS;
         if (++badReads == FAULT_TICKS && !faultReported) { faultReported = true; Serial.println("[IMU] read failures - transmission stopped (the slave must time out and hold)"); }
+        LEDBlink(true, nowMs, 2);  // blink fast on read failure
         return;                                   // nothing is sent from stale data; the filter state is kept
     }
     if (badReads >= FAULT_TICKS) { Serial.println("[IMU] recovered"); faultReported = false; }
     badReads = 0;
+    LEDBlink(false);  // LED off on successful read
 
     for (int i = 0; i < 2; i++) {
+        LEDBlink(true, nowMs, 1);  // blink normal while the IMUs are being read
         cd[i] = applySensorCalibration(raw[i], *scal[i]);
         if (i == 0 && !USE_MAG_9250) cd[i].mag = xyzFloat(0, 0, 0);
         if (!seeded[i]) { g[i] = convertRawToQuaternion(cd[i]); seeded[i] = true; boostUntilMs[i] = nowMs + BOOST_AFTER_SEED_MS; }
@@ -429,6 +432,11 @@ void sessionStep() {
         }
     }
 
-    if (state != ST_RUN) calibrationTick(nowMs);
-    else                 runTick(dt, raw[0].time);
+    if (state != ST_RUN){
+        calibrationTick(nowMs); 
+        LEDBlink(true, nowMs, 1);
+    } else {
+        runTick(dt, raw[0].time); 
+        LEDBlink(false, nowMs, 0);
+    }
 }

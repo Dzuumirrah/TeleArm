@@ -59,11 +59,11 @@ bool MPUInit() {
         upper = &imuUpper6500; upperIs9250 = false;
         Serial.println("[IMU] upper arm: MPU6500 found (no magnetometer) -> 6-axis only");
     } else {
-        Serial.println("[IMU] upper arm: no MPU9250/MPU6500 answers - check wiring CS=27 MOSI=12 MISO=14 SCK=13 and 3.3 V");
+        Serial.printf("[IMU] upper arm: no MPU9250/MPU6500 answers - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V\n", csPin_9250, mosiPin_9250, misoPin_9250, sckPin_9250);
         ok = false;
     }
     if (imu6500.init()) Serial.println("[IMU] forearm: MPU6500 found");
-    else { Serial.println("[IMU] forearm: MPU6500 does not respond - check wiring CS=19 MOSI=21 MISO=23 SCK=22 and 3.3 V"); ok = false; }
+    else { Serial.printf("[IMU] forearm: MPU6500 does not respond - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V\n", csPin_6500, mosiPin_6500, misoPin_6500, sckPin_6500); ok = false; }
     if (!ok) return false;
 
     BenchOffsets b;
@@ -128,4 +128,11 @@ bool benchCalibrateIMUs() {
     }
     Serial.println("[BENCH] offsets saved");
     return saveBenchOffsets(b);
+}
+
+void LEDBlink(bool on, uint32_t lastBlinkMs, uint8_t type) {
+    int interval = LED_BLINK_INT * 1/(type + 1);  // type 0 = slow, 1 = normal, 2 = fast
+    if (millis() - lastBlinkMs > interval){
+        digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+    }
 }

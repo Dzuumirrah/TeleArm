@@ -32,7 +32,9 @@ static void onSent(const uint8_t *, esp_now_send_status_t status) {
 }
 
 bool ESPNowInit() {
+    Serial.println("[NOW] initializing ESP-NOW");
     WiFi.mode(WIFI_STA);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     WiFi.disconnect();
     WiFi.setSleep(false);                      // lowest latency
     esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
@@ -52,6 +54,7 @@ bool ESPNowInit() {
     peer.ifidx = WIFI_IF_STA;
     peer.encrypt = false;
     if (esp_now_add_peer(&peer) != ESP_OK) { Serial.println("[NOW] add peer failed"); return false; }
+    Serial.println("[NOW] ESP-NOW initialized");
     return true;
 }
 

@@ -13,6 +13,8 @@ const int sckPin_9250 = 13;
 
 const int btn_cal = 26;     //   
 const int vibration_motor = 25;
+const int LED_BUILTIN = 2;  // built-in led pin (for ESP32 DevKitC, GPIO 2)
+const int LED_BLINK_INT = 500;  // LED blink interval in milliseconds
 
 const bool useSPI = true;
 
@@ -45,9 +47,9 @@ const float    CAL_STILL_GYRO_DPS = 3.0f;
 const float    CAL_SETTLE_TILT_DEG = 1.5f;
 const float    QUICK_POSE_TOL_DEG = 10.0f;
 
-// Human arm (in metres; placeholders; paper Table 5: upper arm 0.28, forearm 0.25 + hand 0.10 + index 0.085)
-const float HUMAN_UPPER_ARM_LEN = 0.28f;
-const float HUMAN_ELBOW_TO_TIP_LEN = 0.43f;
+// Human arm (in metres; Fariz hands; paper Table 5: upper arm 0.28, forearm 0.25 + hand 0.10 + index 0.085)
+const float HUMAN_UPPER_ARM_LEN = 0.30f;
+const float HUMAN_ELBOW_TO_TIP_LEN = 0.41f;
 
 // Robot (in metres; placeholders)
 const float ROBOT_BASE_HEIGHT = 0.10f;

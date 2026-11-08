@@ -13,3 +13,7 @@ outputs
 filters.ipynb
 serial_logger.py
 src/mpuWhoAmI/
+src/ESPNow_test/
+src/a4988_test/
+
+*.zip

@@ -19,7 +19,7 @@ extern const int sckPin_9250;   // SCK Pin
 // Others
 extern const int btn_cal;           // MPU calibration button (wired to GND, internal pull-up)
 extern const int vibration_motor;   // Vibration motor pin (or led pin) -- not used yet
-
+extern const int LED_BUILTIN;         // built-in led pin (for ESP32 DevKitC, GPIO 2) 
 extern const bool useSPI;           // SPI use flag
 
 // Sampling =================================================
@@ -74,5 +74,6 @@ extern const uint8_t ESPNOW_CHANNEL;
 
 // Debug ====================================================
 extern const bool DEBUG_CSV;                // print a CSV status line at 10 Hz on USB serial
-
+extern const int LED_BLINK_INT;
+    
 #endif
