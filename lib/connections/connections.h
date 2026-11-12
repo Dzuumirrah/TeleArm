@@ -19,6 +19,15 @@ bool readIMUs(IMUData &imu9250, IMUData &imu6500);
 // true when the AK8963 answered in MPUInit()
 bool magnetometerAvailable();
 
+// What MPUInit() found (reported in the STATUS heartbeat so the slave knows the hardware state even if the boot log was missed).
+struct ImuHardwareInfo {
+    bool upperOk, foreOk;        // chip answered during MPUInit()
+    bool upperIs9250;            // false = an MPU6500 sits in the upper-arm slot
+    bool magOk;                  // AK8963 answered
+    bool benchLoaded;            // bench offsets found in flash
+};
+ImuHardwareInfo imuHardwareInfo();
+
 // Bench offset calibration with the library's autoOffsets(): BOTH IMUs lying flat, z up, still.
 // Offsets are stored in flash and re-applied by MPUInit().
 bool benchCalibrateIMUs();
@@ -76,5 +85,87 @@ bool ESPNowInit();                                     // false: ESP-NOW could n
 // Fills start/type/seq/crc and sends. Returns false if esp_now_send() rejected it.
 bool ESPNowSend(JointPacket &p);
 void ESPNowStats(uint32_t &sentOk, uint32_t &sentFail);   // from the send callback
+
+// ---- link state (derived from the unicast MAC ACK reported by the send callback) ----
+// "up" until LINK_DOWN_FAILS sends in a row failed; comes back up on the next ACK.
+// With a broadcast SLAVE_MAC there is no ACK, so the link always looks up.
+bool ESPNowReady();                                    // ESPNowInit() succeeded
+bool ESPNowLinkUp();
+bool ESPNowTakeLinkUpEvent();                          // true once per down->up (or first) transition
+bool ESPNowSendRaw(const uint8_t *data, size_t len);   // no framing added (used by log / status)
+
+// =============================================================================
+//  Master -> slave remote monitor: LOG and STATUS frames           (remotelog.cpp)
+//
+//  Everything the master prints for a human (calibration prompts, init results, errors) is
+//  also sent over ESP-NOW so the laptop attached to the SLAVE sees it.
+//
+//  LOG frame (variable, 11 + len bytes, <= 171):
+//    0 start 0xA5 | 1 type 2 | 2..3 seq u16 | 4..7 t_ms u32 | 8 level (bit7 = replayed) | 9 len | 10.. text | crc8
+//  STATUS frame (fixed 23 bytes, sent every STATUS_PERIOD_MS, also while no calibration exists):
+//    see StatusPacket
+//  Both use the same start byte and CRC-8 as JointPacket; the type byte tells them apart.
+// =============================================================================
+const uint8_t PKT_TYPE_LOG    = 2;
+const uint8_t PKT_TYPE_STATUS = 3;
+
+enum LogLevel : uint8_t { LOGLVL_DEBUG = 0, LOGLVL_INFO = 1, LOGLVL_WARN = 2, LOGLVL_ERROR = 3 };
+const uint8_t LOG_REPLAY_BIT = 0x80;
+const size_t  LOG_MAX_TEXT   = 160;                    // longer messages are truncated
+const int     LOG_RING_LINES = 48;                     // queue / history depth (about 8 KB of RAM)
+const size_t  LOG_HEADER_LEN = 10;                     // bytes before the text
+
+// STATUS hw bits
+const uint8_t HW_UPPER_OK    = 1 << 0;
+const uint8_t HW_FORE_OK     = 1 << 1;
+const uint8_t HW_UPPER_9250  = 1 << 2;   // 0 = MPU6500 in the upper slot
+const uint8_t HW_MAG_OK      = 1 << 3;   // AK8963 answered
+const uint8_t HW_CAL_VALID   = 1 << 4;   // both segment calibrations valid
+const uint8_t HW_ANCHORED    = 1 << 5;   // heading anchored this power cycle (== transmitting)
+const uint8_t HW_MAG_USED    = 1 << 6;   // 9250 heading uses the magnetometer
+const uint8_t HW_BENCH_OK    = 1 << 7;   // bench offsets loaded from flash
+
+struct __attribute__((packed)) StatusPacket {
+    uint8_t  start;        // PKT_START
+    uint8_t  type;         // PKT_TYPE_STATUS
+    uint16_t seq;
+    uint32_t t_ms;         // master millis()
+    uint8_t  state;        // SessionState
+    uint8_t  plan;         // calibration plan (0 none, 1 quick, 2 full, 3 mag+full)
+    uint8_t  hw;           // HW_*
+    uint8_t  flags;        // last PKT_F_* of the joint packet
+    uint32_t sentOk;       // ESP-NOW sends that were acknowledged (all frame types)
+    uint32_t sentFail;
+    uint16_t logDropped;   // log lines lost on the master (queue overflow)
+    uint8_t  crc;
+};
+
+struct LogFrame {          // decoded LOG frame
+    uint16_t seq;
+    uint32_t t_ms;
+    uint8_t  level;
+    bool     replay;
+    uint8_t  len;
+    char     text[LOG_MAX_TEXT + 1];
+};
+
+// ---- master side ----
+void logInit();                                        // clear the queue (called by sessionBegin)
+// printf-style. Always printed on the USB serial port; queued for ESP-NOW when REMOTE_LOG_ENABLED
+// and level >= REMOTE_LOG_MIN_LEVEL. Do NOT include a trailing newline. Never blocks, never sends.
+void logMsg(LogLevel level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+void logService();                                     // sends queued lines (rate limited); call every loop pass
+void logFlush(uint32_t timeoutMs);                     // send everything queued now (before long blocking steps)
+uint16_t logDroppedCount();
+uint16_t logPendingCount();                            // queued, not sent yet
+bool ESPNowSendStatus(StatusPacket &p);                // fills start/type/seq/t_ms-independent fields, counters, crc
+
+// ---- both sides (the slave sketch and the host tests use these) ----
+uint8_t packetType(const uint8_t *data, int len);      // PKT_TYPE_* of a frame with valid length/start/CRC, else 0
+bool    decodeLogPacket(const uint8_t *data, int len, LogFrame &out);
+bool    decodeStatusPacket(const uint8_t *data, int len, StatusPacket &out);
+// Text lines for the slave's serial port ("[M 12.345 W] [CAL] ..." / "[M STATUS] ...")
+size_t  formatLogLine(const LogFrame &f, char *out, size_t outSize);
+size_t  formatStatusLine(const StatusPacket &s, char *out, size_t outSize);
 
 #endif

@@ -199,8 +199,11 @@ When `USE_MAG_9250` is false the upper IMU's magnetometer vector is zeroed so it
 
 ### 3.2 Private functions (anonymous namespace)
 
-#### `void say(const char *s)`
-Prints `[CAL] <text>` on the serial monitor. Used by every calibration message.
+#### `void say(const char *s, LogLevel lv = LOGLVL_INFO)`
+Logs `[CAL] <text>` through `logMsg()`: printed on the master's USB serial and queued for the slave (remote monitor). Used by every calibration message; failures/rejections use `LOGLVL_WARN`, flash errors `LOGLVL_ERROR`.
+
+#### `void statusTick()`
+Once per `STATUS_PERIOD_MS` builds a `StatusPacket` (state, plan, hardware bits from `imuHardwareInfo()`, calibration/anchoring, last joint flags) and sends it with `ESPNowSendStatus()`. Called from `sessionStep()` before the IMU read, so the heartbeat continues while the IMUs fail.
 
 #### `void resetAcc()`
 Zeroes the `HoldAcc` accumulator (`memset`). Called whenever a new averaging window starts: `sessionBegin`, `startPlan`, `calibrationTick` (countdown → hold), `finishHold` (not still / not settled / next pose), `finishMagCal`.
@@ -355,7 +358,13 @@ setup() ─ sessionBegin() ─ MPUInit / benchCalibrateIMUs [components.cpp] · 
 | `loadCalibration()` / `saveCalibration()` | `storage.cpp` | NVS blob with magic, version and FNV-1a checksum; invalid blobs are rejected |
 | `loadBenchOffsets()` / `saveBenchOffsets()` / `clearStorage()` | `storage.cpp` | Same for bench offsets / wipe |
 | `ESPNowInit()` / `ESPNowSend()` / `ESPNowStats()` | `networks.cpp` | Wi-Fi STA + fixed channel, peer from `SLAVE_MAC`; `ESPNowSend` fills start byte, type, 16-bit sequence number and CRC-8 |
-| `crc8()` / `packetValid()` | `networks.cpp` | Used by the master and by the slave receiver |
+| `crc8()` / `packetValid()` | `networks.cpp` | Used by the master and by the slave receiver (`packetValid` accepts JOINT frames only) |
+| `ESPNowReady()` / `ESPNowLinkUp()` / `ESPNowTakeLinkUpEvent()` / `ESPNowSendRaw()` | `networks.cpp` | Link state from the unicast ACK (down after `LINK_DOWN_FAILS` failed sends), raw send used by log/status |
+| `logInit()` / `logMsg()` / `logService()` / `logFlush()` | `remotelog.cpp` | Remote monitor sender: `logMsg` prints on USB and queues the line, `logService` (every `sessionStep`) sends at most one LOG frame per `REMOTE_LOG_MIN_INTERVAL_MS`, `logFlush` drains before blocking steps (bench calibration) |
+| `ESPNowSendStatus()` / `imuHardwareInfo()` | `networks.cpp` / `components.cpp` | STATUS heartbeat frame and the hardware init result it reports |
+| `packetType()` / `decodeLogPacket()` / `decodeStatusPacket()` / `formatLogLine()` / `formatStatusLine()` | `remotelog.cpp` | Shared by the slave sketch and the host tests |
+
+Frame types (same start byte 0xA5 and CRC-8 for all): `1` JOINTS (below), `2` LOG (`seq u16 · t_ms u32 · level (bit7 = replay) · len · text ≤160 · crc8`), `3` STATUS (23 bytes: `seq · t_ms · state · plan · hw bits · joint flags · tx_ok · tx_fail · log_dropped · crc8`).
 
 `JointPacket` (54 bytes, packed, little endian): `start 0xA5 · type · seq (uint16) · t_us (uint32) · joint_deg[3] (float) · q_upper[4] · q_fore[4] · flags · crc8`.
 

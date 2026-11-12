@@ -67,5 +67,13 @@ const float MAX_JOINT_RATE_DPS = 180.0f;
 const uint8_t SLAVE_MAC[6] = { 0xD4, 0x8A, 0xFC, 0x60, 0x49, 0xBC };
 const uint8_t ESPNOW_CHANNEL = 1;
 
+// Remote monitor -------------------------------------------
+const bool     REMOTE_LOG_ENABLED = true;
+const uint8_t  REMOTE_LOG_MIN_LEVEL = 1;           // INFO and above
+const uint32_t REMOTE_LOG_MIN_INTERVAL_MS = 20;
+const uint32_t STATUS_PERIOD_MS = 1000;
+const int      REMOTE_LOG_REPLAY_LINES = 24;
+const int      LINK_DOWN_FAILS = 3;
+
 // Debug ----------------------------------------------------
 const bool DEBUG_CSV = true;

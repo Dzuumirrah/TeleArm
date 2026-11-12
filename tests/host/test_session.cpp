@@ -12,6 +12,7 @@
 #include <Preferences.h>
 
 extern std::vector<std::vector<uint8_t> > g_espnowSent;
+extern bool g_shimAckOk;
 void shimSetMicros(unsigned long v);
 void shimSetPin(int p, int v);
 extern void (*shimDelayHook)(unsigned long);
@@ -24,6 +25,9 @@ static size_t consumed = 0;
 
 struct Rec { float t; float j[3]; float e[3]; float tipErrMm; uint8_t flags; uint8_t seq; uint32_t t_us; float hd[3]; float hdT[3]; };
 static std::vector<Rec> recs;
+static std::vector<LogFrame> monLogs;          // decoded LOG frames the slave would have printed
+static std::vector<StatusPacket> monStatus;    // decoded STATUS heartbeats
+static std::vector<unsigned long> monLogMs;    // master-side time when each LOG frame was sent
 static int badPackets = 0, seqGaps = 0;
 static bool haveSeq = false; static uint16_t lastSeq = 0;
 
@@ -40,6 +44,9 @@ static void expectedJoints(const Mat3 &up, const Mat3 &fo, float out[3]) {
 static void drain() {
     while (consumed < g_espnowSent.size()) {
         const std::vector<uint8_t> &b = g_espnowSent[consumed++];
+        const uint8_t ty = packetType(b.data(), (int)b.size());
+        if (ty == PKT_TYPE_LOG) { LogFrame f; if (decodeLogPacket(b.data(), (int)b.size(), f)) { monLogs.push_back(f); monLogMs.push_back(millis()); } else badPackets++; continue; }
+        if (ty == PKT_TYPE_STATUS) { StatusPacket st; if (decodeStatusPacket(b.data(), (int)b.size(), st)) monStatus.push_back(st); else badPackets++; continue; }
         if (!packetValid(b.data(), (int)b.size()) || b.size() != sizeof(JointPacket)) { badPackets++; continue; }
         JointPacket p; memcpy(&p, b.data(), sizeof(p));
         if (haveSeq && (uint16_t)(p.seq - lastSeq) != 1) seqGaps++;
@@ -120,9 +127,9 @@ static void tumble(float secs) {
     }
 }
 
-static void pressButton(float secs) { shimSetPin(btn_cal, LOW); run(secs); shimSetPin(btn_cal, HIGH); run(0.1f); }
+static void pressButton(float secs) { shimSetPin(btn_cal, HIGH); run(secs); shimSetPin(btn_cal, LOW); run(0.1f); }
 static void bootDevice() {
-    shimSetPin(btn_cal, HIGH);
+    shimSetPin(btn_cal, LOW);
     simStartMotion(nowUs);
     consumed = g_espnowSent.size();
     haveSeq = false;
@@ -202,7 +209,7 @@ static void test_full_6axis_and_reboot() {
     clearStorage(); setupWorld(false); recs.clear();
     bootDevice();
     run(2);
-    shimSetPin(btn_cal, LOW); run(2.3f); shimSetPin(btn_cal, HIGH);
+    shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW);
     run(0.05f);
     CHECK(sessionState() == ST_CAL_COUNTDOWN, "FULL did not start (state %d)", sessionState());
     bool ok = fullSequence(pose1(), pose2());
@@ -235,7 +242,7 @@ static void test_mag_flow() {
     clearStorage(); setupWorld(true); recs.clear();
     bootDevice();
     run(2);
-    shimSetPin(btn_cal, LOW); run(6.3f); shimSetPin(btn_cal, HIGH);
+    shimSetPin(btn_cal, HIGH); run(6.3f); shimSetPin(btn_cal, LOW);
     run(0.05f);
     CHECK(sessionState() == ST_MAG_CAL, "MAG cal did not start (state %d)", sessionState());
     for (int i = 0; i < 25 * 200 && sessionState() == ST_MAG_CAL; i++) tumble(0.005f);
@@ -324,7 +331,7 @@ static void test_failures() {
     bootDevice();
     run(1);
     // --- not still during the hold -> averaging restarts, calibration still completes
-    shimSetPin(btn_cal, LOW); run(2.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+    shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW); run(0.05f);
     glideTo(pose1(), pose1(), 1.5f);
     runUntil([] { return sessionState() == ST_CAL_HOLD; }, 5);
     for (int i = 0; i < 100; i++) { gUp = upperTruth(D2R(5 * sinf(i * 0.3f)), 0, 0); gFo = gUp; tick(); }    // shaking, above CAL_STILL_GYRO_DPS
@@ -338,12 +345,12 @@ static void test_failures() {
     CHECK(runUntil([] { return sessionState() != ST_CAL_HOLD; }, 5), "hold 2 end");
     CHECK(sessionState() == ST_RUN && !IsMPUSynced(), "wrong pose 2 must be rejected (state %d synced %d)", sessionState(), IsMPUSynced());
     // --- abort by button during countdown
-    shimSetPin(btn_cal, LOW); run(2.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+    shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW); run(0.05f);
     CHECK(sessionState() == ST_CAL_COUNTDOWN, "start");
     run(0.5f); pressButton(0.2f);
     CHECK(sessionState() == ST_RUN, "button must abort calibration");
     // --- a good FULL, then IMU read failure in operation
-    shimSetPin(btn_cal, LOW); run(2.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+    shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW); run(0.05f);
     CHECK(fullSequence(pose1(), pose2()), "FULL");
     CHECK(IsMPUSynced(), "synced");
     prepTrajectory();
@@ -382,26 +389,170 @@ static void test_bench_mode() {
     printf("[bench offsets: power on with the button held]\n");
     clearStorage(); setupWorld(false);
     simStartMotion(nowUs);
-    shimSetPin(btn_cal, LOW);
+    shimSetPin(btn_cal, HIGH);
     static unsigned long releaseAt;
     releaseAt = nowUs / 1000 + 4000;
     shimSetMicros(nowUs);
-    shimDelayHook = [](unsigned long) { if (millis() >= releaseAt) shimSetPin(btn_cal, HIGH); };
+    shimDelayHook = [](unsigned long) { if (millis() >= releaseAt) shimSetPin(btn_cal, LOW); };
     sim.benchCalls = 0;
     sessionBegin();
     shimDelayHook = 0;
     nowUs = millis() * 1000UL + 1000000UL;
     CHECK(sim.benchCalls == 1, "bench calibration calls %d", sim.benchCalls);
     sim.benchCalls = 0;
-    shimSetPin(btn_cal, HIGH);
+    shimSetPin(btn_cal, LOW);
     bootDevice();
     CHECK(sim.benchCalls == 0, "no bench calibration without the button");
+}
+
+// ---------------------------------------------------------------- remote monitor (master serial -> slave)
+static bool logHas(size_t from, const char *needle) {
+    for (size_t i = from; i < monLogs.size(); i++) if (strstr(monLogs[i].text, needle)) return true;
+    return false;
+}
+static int logCount(size_t from, const char *needle) {
+    int n = 0; for (size_t i = from; i < monLogs.size(); i++) if (strstr(monLogs[i].text, needle)) n++;
+    return n;
+}
+
+static void test_remote_monitor() {
+    printf("[remote monitor: LOG + STATUS frames]\n");
+    clearStorage(); setupWorld(true); recs.clear(); monLogs.clear(); monStatus.clear(); monLogMs.clear();
+    g_shimAckOk = true;
+    badPackets = 0;
+    bootDevice();
+    run(2.0f);
+
+    // --- boot messages reach the slave
+    CHECK(logHas(0, "[NOW] ESP-NOW initialized"), "boot: ESP-NOW line missing");
+    CHECK(logHas(0, "[CAL] no calibration stored"), "boot: 'no calibration stored' missing");
+    CHECK(logHas(0, "[SESSION]"), "boot: session line missing");
+    // STATUS heartbeat while nothing is calibrated
+    CHECK(monStatus.size() >= 2 && monStatus.size() <= 3, "status frames in 2 s: %d", (int)monStatus.size());
+    if (!monStatus.empty()) {
+        const StatusPacket &st = monStatus.back();
+        CHECK(st.state == ST_RUN && st.plan == 0, "status state %d plan %d", st.state, st.plan);
+        CHECK((st.hw & HW_UPPER_OK) && (st.hw & HW_FORE_OK) && (st.hw & HW_UPPER_9250), "status hw 0x%02X", st.hw);
+        CHECK(!(st.hw & HW_ANCHORED), "anchored before calibration");
+        char line[300]; formatStatusLine(st, line, sizeof(line));
+        CHECK(strstr(line, "state=RUN") && strstr(line, "upper=MPU9250") && strstr(line, "anchored=no"), "status text: %s", line);
+    }
+    // --- a full calibration: every prompt arrives in order, with level, contiguous seq
+    size_t from = monLogs.size();
+    shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW); run(0.05f);
+    CHECK(fullSequence(pose1(), pose2()), "FULL");
+    run(1.0f);
+    CHECK(logHas(from, "[CAL] POSE 1"), "POSE 1 prompt not forwarded");
+    CHECK(logHas(from, "[CAL] 3..."), "countdown 3 not forwarded");
+    CHECK(logHas(from, "[CAL] hold still"), "hold prompt not forwarded");
+    CHECK(logHas(from, "[CAL] POSE 2"), "POSE 2 prompt not forwarded");
+    CHECK(logHas(from, "[CAL] FULL calibration done"), "completion not forwarded");
+    {
+        int iP1 = -1, iP2 = -1, iDone = -1;
+        for (size_t i = from; i < monLogs.size(); i++) {
+            if (iP1 < 0 && strstr(monLogs[i].text, "POSE 1")) iP1 = (int)i;
+            if (iP2 < 0 && strstr(monLogs[i].text, "POSE 2")) iP2 = (int)i;
+            if (iDone < 0 && strstr(monLogs[i].text, "FULL calibration done")) iDone = (int)i;
+        }
+        CHECK(iP1 >= 0 && iP1 < iP2 && iP2 < iDone, "calibration prompts out of order (%d %d %d)", iP1, iP2, iDone);
+    }
+    bool seqOk = true, timeOk = true;
+    for (size_t i = 1; i < monLogs.size(); i++) {
+        if ((uint16_t)(monLogs[i].seq - monLogs[i - 1].seq) != 1) seqOk = false;
+        if (monLogs[i].t_ms < monLogs[i - 1].t_ms) timeOk = false;
+    }
+    CHECK(seqOk, "log sequence gap in a clean link");
+    CHECK(timeOk, "log time goes backwards");
+    CHECK(logDroppedCount() == 0, "lines dropped in normal operation: %d", logDroppedCount());
+    CHECK(monStatus.back().hw & HW_ANCHORED, "status must show anchored after FULL");
+    CHECK(monStatus.back().hw & HW_CAL_VALID, "status must show valid calibration");
+    CHECK(badPackets == 0, "undecodable frames: %d", badPackets);
+    {   // slave-side text
+        char line[300]; formatLogLine(monLogs.back(), line, sizeof(line));
+        CHECK(line[0] == '[' && line[1] == 'M' && strstr(line, monLogs.back().text), "log text: %s", line);
+    }
+    // joint stream unaffected: 50 Hz and flags intact
+    prepTrajectory(); size_t r0 = recs.size(); runTrajectory(4);
+    CHECK(recs.size() - r0 >= 195 && recs.size() - r0 <= 205, "joint packets in 4 s: %d", (int)(recs.size() - r0));
+
+    // --- errors are visible: IMU read failure while calibrated
+    from = monLogs.size(); size_t st0 = monStatus.size();
+    sim.failReads = 600; runTrajectory(3.2f);
+    CHECK(logHas(from, "[IMU] read failures"), "IMU failure not forwarded");
+    CHECK(monStatus.size() - st0 >= 2, "status heartbeat stopped while the IMUs failed (%d)", (int)(monStatus.size() - st0));
+    bool lvlErr = false; for (size_t i = from; i < monLogs.size(); i++) if (strstr(monLogs[i].text, "[IMU] read failures") && monLogs[i].level == LOGLVL_ERROR) lvlErr = true;
+    CHECK(lvlErr, "IMU failure must be ERROR level");
+    sim.failReads = 0; runTrajectory(1.0f);
+    CHECK(logHas(from, "[IMU] recovered"), "recovery not forwarded");
+
+    // --- debug lines and the CSV are USB only
+    from = monLogs.size();
+    logMsg(LOGLVL_DEBUG, "debug only on usb"); run(0.3f);
+    CHECK(!logHas(from, "debug only"), "DEBUG line was forwarded");
+    for (size_t i = 0; i < monLogs.size(); i++) CHECK(!(monLogs[i].text[0] >= '0' && monLogs[i].text[0] <= '9') || strstr(monLogs[i].text, "...") , "csv line in log: %s", monLogs[i].text);
+
+    // --- truncation of an over-long message
+    from = monLogs.size();
+    { char big[400]; memset(big, 'x', sizeof(big)); big[399] = 0; logMsg(LOGLVL_WARN, "%s", big); run(0.2f); }
+    CHECK(monLogs.size() == from + 1 && monLogs.back().len == LOG_MAX_TEXT && strlen(monLogs.back().text) == LOG_MAX_TEXT, "truncation len %d", monLogs.empty() ? -1 : monLogs.back().len);
+
+    // --- burst: rate limit, queue overflow, drop accounting, newest survives
+    clearStorage(); setupWorld(true); bootDevice(); run(1.0f);
+    from = monLogs.size(); unsigned long t0 = millis();
+    for (int i = 0; i < 100; i++) logMsg(LOGLVL_INFO, "burst %d", i);
+    CHECK(logPendingCount() == LOG_RING_LINES, "pending %d", logPendingCount());
+    run(2.0f);
+    CHECK(logDroppedCount() == 100 - LOG_RING_LINES, "dropped %d", logDroppedCount());
+    CHECK(logCount(from, "burst ") == LOG_RING_LINES, "burst lines delivered %d", logCount(from, "burst "));
+    CHECK(logHas(from, "burst 99") && !logHas(from, "burst 0") && logHas(from, "burst 52") && !logHas(from, "burst 51"), "oldest lines must be the ones dropped");
+    {
+        unsigned long minGap = 1000000UL; size_t prev = 0; bool have = false;
+        for (size_t i = from; i < monLogs.size(); i++) if (strstr(monLogs[i].text, "burst ")) { if (have) { unsigned long gap = monLogMs[i] - monLogMs[prev]; if (gap < minGap) minGap = gap; } prev = i; have = true; }
+        CHECK(minGap >= REMOTE_LOG_MIN_INTERVAL_MS, "log frames closer than the rate limit: %lu ms", minGap);
+        (void)t0;
+    }
+    run(1.2f);
+    CHECK(monStatus.back().logDropped == 100 - LOG_RING_LINES, "status logDropped %u", monStatus.back().logDropped);
+
+    // --- link loss and recovery: unsent lines are kept, the last lines are replayed and marked
+    clearStorage(); setupWorld(true); bootDevice(); run(2.0f);
+    from = monLogs.size();
+    logMsg(LOGLVL_INFO, "before outage"); run(0.2f);
+    g_shimAckOk = false; run(3.5f);                       // 1 Hz heartbeats fail x3 -> link down (idle detection ~3 s)
+    CHECK(!ESPNowLinkUp(), "link must be down after repeated failures");
+    logMsg(LOGLVL_WARN, "during outage A"); logMsg(LOGLVL_WARN, "during outage B"); run(0.5f);
+    CHECK(!logHas(from, "during outage"), "lines delivered while the slave is away");
+    CHECK(logPendingCount() >= 2, "lines must stay queued while the link is down (%d)", logPendingCount());
+    g_shimAckOk = true; run(2.5f);
+    CHECK(ESPNowLinkUp(), "link must come back");
+    CHECK(logCount(from, "during outage A") == 1 && logCount(from, "during outage B") == 1, "outage lines must arrive exactly once (%d, %d)", logCount(from, "during outage A"), logCount(from, "during outage B"));
+    bool anyReplay = false, replayBefore = false;
+    for (size_t i = from; i < monLogs.size(); i++) { if (monLogs[i].replay) { anyReplay = true; if (strstr(monLogs[i].text, "before outage")) replayBefore = true; } }
+    CHECK(anyReplay && replayBefore, "replayed history missing/unmarked");
+    { char line[300]; for (size_t i = from; i < monLogs.size(); i++) if (monLogs[i].replay) { formatLogLine(monLogs[i], line, sizeof(line)); CHECK(strstr(line, " R]"), "replay marker: %s", line); break; } }
+
+    // --- decoders reject damaged frames
+    {
+        std::vector<uint8_t> f;
+        for (size_t i = g_espnowSent.size(); i-- > 0;) if (packetType(g_espnowSent[i].data(), (int)g_espnowSent[i].size()) == PKT_TYPE_LOG) { f = g_espnowSent[i]; break; }
+        LogFrame lf; StatusPacket sp;
+        CHECK(!f.empty() && decodeLogPacket(f.data(), (int)f.size(), lf), "sanity decode");
+        std::vector<uint8_t> b = f; b[12] ^= 0x10;                  CHECK(!decodeLogPacket(b.data(), (int)b.size(), lf), "flipped text bit accepted");
+        b = f; b[9]++;                                              CHECK(!decodeLogPacket(b.data(), (int)b.size(), lf), "wrong len accepted");
+        CHECK(!decodeLogPacket(f.data(), (int)f.size() - 1, lf), "truncated frame accepted");
+        CHECK(!decodeStatusPacket(f.data(), (int)f.size(), sp), "log decoded as status");
+        CHECK(!packetValid(f.data(), (int)f.size()), "log frame passes the JOINT validator (slave would misparse it)");
+        CHECK(!decodeLogPacket(f.data(), 3, lf), "tiny frame");
+    }
+    CHECK(sizeof(StatusPacket) == 23, "status size %d", (int)sizeof(StatusPacket));
+    CHECK(LOG_HEADER_LEN + LOG_MAX_TEXT + 1 <= 250, "log frame too large");
+    g_shimAckOk = true;
 }
 
 int main(int argc, char **argv) {
     if (argc > 1 && std::string(argv[1]) == "probe") {
         clearStorage(); setupWorld(false); recs.clear(); bootDevice(); run(1);
-        shimSetPin(btn_cal, LOW); run(2.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+        shimSetPin(btn_cal, HIGH); run(2.3f); shimSetPin(btn_cal, LOW); run(0.05f);
         printf("full ok=%d\n", fullSequence(pose1(), pose2()));
         struct P { float a, b, d; } ps[] = { {0,0,0}, {90,0,0}, {45,0,0}, {0,30,0}, {0,0,60}, {45,20,70} };
         for (int i = 0; i < 6; i++) {
@@ -422,7 +573,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && std::string(argv[1]) == "csv") {          // dummy data set: csv <out.csv>
         const char *outPath = argc > 2 ? argv[2] : "telearm_dummy_packets.csv";
         clearStorage(); setupWorld(true); recs.clear(); bootDevice(); run(1);
-        shimSetPin(btn_cal, LOW); run(6.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+        shimSetPin(btn_cal, HIGH); run(6.3f); shimSetPin(btn_cal, LOW); run(0.05f);
         for (int i = 0; i < 25 * 200 && sessionState() == ST_MAG_CAL; i++) tumble(0.005f);
         if (!fullSequence(pose1(), pose2())) { printf("calibration failed\n"); return 1; }
         struct Pz { float a, b, d, tw, pr; const char *name; };
@@ -447,7 +598,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && std::string(argv[1]) == "probe9") {
         clearStorage(); setupWorld(true); recs.clear(); bootDevice(); run(1);
-        shimSetPin(btn_cal, LOW); run(6.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+        shimSetPin(btn_cal, HIGH); run(6.3f); shimSetPin(btn_cal, LOW); run(0.05f);
         for (int i = 0; i < 25 * 200 && sessionState() == ST_MAG_CAL; i++) tumble(0.005f);
         printf("full ok=%d\n", fullSequence(pose1(), pose2()));
         { const SensorCal &c = sessionCalibration().s9250; printf("magcal off %.1f %.1f %.1f (true %.1f %.1f %.1f) scale %.3f %.3f %.3f (true inv %.3f %.3f %.3f) swap %d\n", c.magOffset.x, c.magOffset.y, c.magOffset.z, sim.hardIron.x, sim.hardIron.y, sim.hardIron.z, c.magScale.x, c.magScale.y, c.magScale.z, 1/sim.softIron.x, 1/sim.softIron.y, 1/sim.softIron.z, c.magSwapAxes); }
@@ -478,6 +629,7 @@ int main(int argc, char **argv) {
     test_mag_flow();
     test_failures();
     test_bench_mode();
+    test_remote_monitor();
     printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }
@@ -488,7 +640,7 @@ void drift_experiment() {
     for (int trial = 0; trial < 3; trial++) {
         clearStorage(); setupWorld(true); recs.clear(); consumed = g_espnowSent.size();
         bootDevice(); run(1);
-        shimSetPin(btn_cal, LOW); run(6.3f); shimSetPin(btn_cal, HIGH); run(0.05f);
+        shimSetPin(btn_cal, HIGH); run(6.3f); shimSetPin(btn_cal, LOW); run(0.05f);
         for (int i = 0; i < 25 * 200 && sessionState() == ST_MAG_CAL; i++) tumble(0.005f);
         { const SensorCal &c = sessionCalibration().s9250; printf("  magcal valid %d swap %d (true %d) off %.1f %.1f %.1f (true %.1f %.1f %.1f) scale %.3f %.3f %.3f (true inv %.3f %.3f %.3f)\n", c.magValid, c.magSwapAxes, sim.akSwap, c.magOffset.x, c.magOffset.y, c.magOffset.z, sim.hardIron.x, sim.hardIron.y, sim.hardIron.z, c.magScale.x, c.magScale.y, c.magScale.z, 1/sim.softIron.x, 1/sim.softIron.y, 1/sim.softIron.z); }
         if (!fullSequence(pose1(), pose2())) { printf("  calibration failed\n"); return; }

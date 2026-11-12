@@ -72,6 +72,14 @@ extern const float MAX_JOINT_RATE_DPS;      // slew limit applied before sending
 extern const uint8_t SLAVE_MAC[6];          // FF:FF:FF:FF:FF:FF = broadcast (dev default)
 extern const uint8_t ESPNOW_CHANNEL;
 
+// Remote monitor (master serial output -> slave over ESP-NOW) ====
+extern const bool     REMOTE_LOG_ENABLED;
+extern const uint8_t  REMOTE_LOG_MIN_LEVEL;        // 0 debug, 1 info, 2 warn, 3 error
+extern const uint32_t REMOTE_LOG_MIN_INTERVAL_MS;  // at most one log frame per interval (keeps the 50 Hz joint stream clear)
+extern const uint32_t STATUS_PERIOD_MS;            // STATUS heartbeat
+extern const int      REMOTE_LOG_REPLAY_LINES;     // re-sent (marked as replay) when the link comes back
+extern const int      LINK_DOWN_FAILS;             // consecutive failed sends before the link counts as down
+
 // Debug ====================================================
 extern const bool DEBUG_CSV;                // print a CSV status line at 10 Hz on USB serial
 extern const int LED_BLINK_INT;

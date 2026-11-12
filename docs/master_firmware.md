@@ -27,7 +27,8 @@ All kinematics run on the master. The slave only validates the packet and drives
 | `lib/kinematics/cartesian.cpp` | fingertip, human→robot mapping, IK/FK, joint limits and slew limit |
 | `lib/connections/components.cpp` | SPI buses, IMU init/read, bench offsets |
 | `lib/connections/storage.cpp` | flash (NVS) storage with magic/version/checksum |
-| `lib/connections/networks.cpp` | ESP-NOW, packet CRC |
+| `lib/connections/networks.cpp` | ESP-NOW, packet CRC, link state from the unicast ACK |
+| `lib/connections/remotelog.cpp` | remote monitor: log queue, LOG/STATUS decoders shared with the slave |
 | `lib/session/session.*` | 200 Hz loop, calibration state machine, button, packet building |
 | `src/main.cpp` | `setup()` / `loop()` only |
 | `src/slave_rx_test/slave_rx_test.cpp` | receiver test sketch for the slave ESP32 (`pio run -e slave_test`) |
@@ -35,7 +36,7 @@ All kinematics run on the master. The slave only validates the packet and drives
 
 ## 3. How to operate it
 
-Button on GPIO26 (active LOW):
+Button on GPIO26 (pull-down, active HIGH = pressed):
 
 | Gesture | Action |
 |---|---|
@@ -48,6 +49,28 @@ Button on GPIO26 (active LOW):
 Pose 1: arm hanging straight down, elbow straight, still. Pose 2: arm straight forward at shoulder height (horizontal),
 elbow straight, still. Each pose: 3 s countdown, then 2 s hold. Progress is printed on the serial monitor (115200).
 **Nothing is transmitted until both segments are calibrated and anchored in this power cycle.**
+
+### 3.1 Watching the master from the slave's USB port (remote monitor)
+
+Everything the master prints for a human (init results, wiring errors, calibration prompts and countdown, "not still", "pose rejected",
+IMU read failures, flash errors) is also sent over ESP-NOW and printed by the slave sketch. With the laptop on the slave you see:
+
+```
+[S] waiting for the master (its log and status are forwarded here)
+[M 10.412 I] [IMU] upper arm: MPU9250 found
+[M 12.874 I] [CAL] POSE 1: arm hanging straight down, elbow straight. Hold still after the countdown.
+[M 13.001 W] [CAL] not still - hold the pose without moving
+[M STATUS 14.000] state=CAL_HOLD plan=FULL upper=MPU9250 fore=MPU6500 mag=ok cal=no anchored=no bench=yes flags=0x00 tx_ok=57 tx_fail=0 log_dropped=0
+seq=1203 a=12.0 b=3.1 d=40.2 flags=0x01 ok=1203 bad=0 lost=0
+```
+- `[M <seconds> <D|I|W|E>]` = a master log line with its master-side time and level; ` R` after the level = replayed (see below).
+- `[M STATUS ...]` = 1 Hz heartbeat: session state, calibration plan, which IMUs/magnetometer were found, calibration valid/anchored, transmit counters, lines dropped. It is sent even before calibration and while the IMUs fail, so it also answers "is the master alive?".
+- Lines starting with `[S]` come from the slave itself (e.g. master log lines lost in the air).
+- The 10 Hz debug CSV (`DEBUG_CSV`) and DEBUG-level lines stay on the master's USB only.
+- Settings: `REMOTE_LOG_ENABLED`, `REMOTE_LOG_MIN_LEVEL`, `REMOTE_LOG_MIN_INTERVAL_MS`, `STATUS_PERIOD_MS`, `REMOTE_LOG_REPLAY_LINES`, `LINK_DOWN_FAILS` in `configurations.cpp`.
+- Behaviour: the log never blocks the 200 Hz loop; at most one log frame per 20 ms; a 48-line queue (oldest dropped first and counted in `log_dropped`); the master tracks the unicast ACK and queues lines while the slave is away. When the slave returns, the last 24 lines are sent again marked `R`. This needs the real slave MAC in `SLAVE_MAC` (with a broadcast address there is no ACK, so the link always looks up and nothing is replayed beyond the first link-up).
+- Boot lines are sent only after ESP-NOW starts and a status heartbeat shows the hardware result anyway, so a slave that boots later still learns the IMU state within 1 s.
+- Frame layouts: LOG `A5 | 02 | seq u16 | t_ms u32 | level (bit7 replay) | len | text | crc8`, STATUS 23 bytes (see `StatusPacket` in `connections.h`); JointPacket is unchanged (the slave must check `packetType()` or `packetValid()`, which accepts joint frames only).
 
 ## 4. Decisions (everything I decided without a final answer from you)
 
@@ -105,7 +128,7 @@ Run `MPU_LIB=<path to MPU9250_WE/src> ./tests/host/build_and_run.sh` (add `DRIFT
 (Arduino/SPI/Preferences/ESP-NOW stand-ins) and the real MPU9250_WE library headers.
 
 - Unit tests (20 302 checks): quaternion/matrix maths, Madgwick gradient, Kurpath joints, calibration with random mountings/headings, magnetometer calibration, IK/FK.
-- Simulated end-to-end (1 558 checks): fake arm + two IMUs (random mounting, gyro bias, noise, hard/soft-iron, swapped AK8963 axes, lever-arm accelerations) driving the real session code:
+- Simulated end-to-end (1 629 checks, incl. the remote monitor: prompts forwarded in order, rate limit, overflow/drop count, truncation, link outage + replay, damaged frames rejected): fake arm + two IMUs (random mounting, gyro bias, noise, hard/soft-iron, swapped AK8963 axes, lever-arm accelerations) driving the real session code:
   nothing sent before calibration; FULL (6-axis) and MAG+FULL flows; reboot + QUICK; wrong pose, motion during hold, abort, IMU read failure, corrupted flash, bench mode;
   packet CRC, 50 Hz timing, sequence numbers. Typical result over a 30 s arm motion: joint error < 1°, fingertip error ≈ 2 mm mean / 5 mm max.
 
@@ -116,3 +139,11 @@ Run `MPU_LIB=<path to MPU9250_WE/src> ./tests/host/build_and_run.sh` (add `DRIFT
   (a sloppy pose 2 of 80° flexion + 5° abduction gives up to ~4° orientation error; 10° forearm pronation error in QUICK gives ~1.7° elbow error).
 - Finger/wrist: the 6500 sits on the forearm, so the fingertip assumes a fixed offset along the forearm. Choose the finger and measure `HUMAN_ELBOW_TO_TIP_LEN`.
 - Link lengths, joint limits, centre point, scale and servo zero positions are placeholders.
+
+
+## 7. Remote-monitor decisions (added with the slave serial feature)
+- One shared 48-line ring, indexed by running counters, drops the **oldest** line on overflow (the newest calibration prompt is the useful one) and reports the count in STATUS.
+- The sender is optimistic: it transmits until `LINK_DOWN_FAILS` (3) consecutive sends fail (≈3 s while idle, instantly while the 50 Hz joint stream runs), then queues; on the next ACK it replays the last 24 lines flagged `R`.
+- Separate sequence counters for JOINT / LOG / STATUS so the slave can count losses per stream.
+- Output format on the slave is plain text lines (easy for any serial monitor); the joint line format is unchanged. If your laptop software needs binary frames from the slave instead, the decoders (`decodeLogPacket`, `decodeStatusPacket`) are in `connections.h`.
+- `logMsg()` replaces `Serial.print` everywhere in the firmware and still prints on the master's USB. The banner in `main.cpp` and the CSV stay USB-only.

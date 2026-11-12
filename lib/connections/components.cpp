@@ -17,7 +17,7 @@ MPU6500_WE imuUpper6500 = MPU6500_WE(&spi9250, csPin_9250, mosiPin_9250, misoPin
 static MPU6500_WE *upper = &imu9250;
 static bool upperIs9250 = true;
 
-static bool magOk = false;
+static bool magOk = false, upperOk = false, foreOk = false, benchLoaded = false;
 
 // Same settings for both IMUs (MPU9250_WE derives from MPU6500_WE).
 // Internal rate 1 kHz + DLPF 4, polled at SAMPLE_RATE_HZ: every poll reads the freshest sample.
@@ -50,30 +50,31 @@ IMUData obtainIMUData(MPU9250_WE &mpu) {
 bool MPUInit() {
     bool ok = true;
 
-    upper = &imu9250; upperIs9250 = true; magOk = false;
+    upper = &imu9250; upperIs9250 = true; magOk = false; upperOk = foreOk = benchLoaded = false;
     if (imu9250.init()) {
-        Serial.println("[IMU] upper arm: MPU9250 found");
+        upperOk = true; logMsg(LOGLVL_INFO, "[IMU] upper arm: MPU9250 found");
         magOk = imu9250.initMagnetometer();
-        if (!magOk) Serial.println("[IMU] AK8963 magnetometer does not respond -> 6-axis only");
+        if (!magOk) logMsg(LOGLVL_WARN, "[IMU] AK8963 magnetometer does not respond -> 6-axis only");
     } else if (imuUpper6500.init()) {
-        upper = &imuUpper6500; upperIs9250 = false;
-        Serial.println("[IMU] upper arm: MPU6500 found (no magnetometer) -> 6-axis only");
+        upper = &imuUpper6500; upperIs9250 = false; upperOk = true;
+        logMsg(LOGLVL_WARN, "[IMU] upper arm: MPU6500 found (no magnetometer) -> 6-axis only");
     } else {
-        Serial.printf("[IMU] upper arm: no MPU9250/MPU6500 answers - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V\n", csPin_9250, mosiPin_9250, misoPin_9250, sckPin_9250);
+        logMsg(LOGLVL_ERROR, "[IMU] upper arm: no MPU9250/MPU6500 answers - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V", csPin_9250, mosiPin_9250, misoPin_9250, sckPin_9250);
         ok = false;
     }
-    if (imu6500.init()) Serial.println("[IMU] forearm: MPU6500 found");
-    else { Serial.printf("[IMU] forearm: MPU6500 does not respond - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V\n", csPin_6500, mosiPin_6500, misoPin_6500, sckPin_6500); ok = false; }
+    if (imu6500.init()) { foreOk = true; logMsg(LOGLVL_INFO, "[IMU] forearm: MPU6500 found"); }
+    else { logMsg(LOGLVL_ERROR, "[IMU] forearm: MPU6500 does not respond - check wiring CS=%d MOSI=%d MISO=%d SCK=%d and 3.3 V", csPin_6500, mosiPin_6500, misoPin_6500, sckPin_6500); ok = false; }
     if (!ok) return false;
 
     BenchOffsets b;
     if (loadBenchOffsets(b)) {
+        benchLoaded = true;
         upper->setAccOffsets(b.acc9250);
         upper->setGyrOffsets(b.gyr9250);
         imu6500.setAccOffsets(b.acc6500);
         imu6500.setGyrOffsets(b.gyr6500);
     } else {
-        Serial.println("[IMU] no bench offsets stored: hold the button while powering on to create them");
+        logMsg(LOGLVL_WARN, "[IMU] no bench offsets stored: hold the button while powering on to create them");
     }
 
     configureIMU(*upper);
@@ -84,6 +85,8 @@ bool MPUInit() {
 }
 
 bool magnetometerAvailable() { return magOk; }
+
+ImuHardwareInfo imuHardwareInfo() { ImuHardwareInfo h; h.upperOk = upperOk; h.foreOk = foreOk; h.upperIs9250 = upperIs9250; h.magOk = magOk; h.benchLoaded = benchLoaded; return h; }
 
 static bool plausible(const IMUData &d) {
     const float a = vnorm(d.acc), g = vnorm(d.gyr);
@@ -96,13 +99,14 @@ bool readIMUs(IMUData &i9250, IMUData &i6500) {
     const bool ok = plausible(i9250) && plausible(i6500);
     static uint32_t bad = 0;
     if (!ok && (bad++ % 200) == 0)       // visible diagnosis instead of a silent stall
-        Serial.printf("[IMU] implausible data: upper |acc|=%.2f g |gyr|=%.0f dps, forearm |acc|=%.2f g |gyr|=%.0f dps (0 = chip asleep / not wired)\n",
+        logMsg(LOGLVL_WARN, "[IMU] implausible data: upper |acc|=%.2f g |gyr|=%.0f dps, forearm |acc|=%.2f g |gyr|=%.0f dps (0 = chip asleep / not wired)",
                       vnorm(i9250.acc), vnorm(i9250.gyr), vnorm(i6500.acc), vnorm(i6500.gyr));
     return ok;
 }
 
 bool benchCalibrateIMUs() {
-    Serial.println("[BENCH] keep both IMUs flat (z up) and still...");
+    logMsg(LOGLVL_INFO, "[BENCH] keep both IMUs flat (z up) and still (takes a few seconds)...");
+    logFlush(300);                       // autoOffsets() blocks for seconds: get the prompt out first
     upper->autoOffsets();
     imu6500.autoOffsets();
 
@@ -121,13 +125,14 @@ bool benchCalibrateIMUs() {
     configureIMU(*upper);        // autoOffsets changed the ranges / DLPF
     configureIMU(imu6500);
     if (!sane) {
-        Serial.println("[BENCH] offsets implausible (IMU not flat or moving) - NOT saved");
+        logMsg(LOGLVL_ERROR, "[BENCH] offsets implausible (IMU not flat or moving) - NOT saved");
         upper->setAccOffsets(xyzFloat(0, 0, 0)); upper->setGyrOffsets(xyzFloat(0, 0, 0));
         imu6500.setAccOffsets(xyzFloat(0, 0, 0)); imu6500.setGyrOffsets(xyzFloat(0, 0, 0));
         return false;
     }
-    Serial.println("[BENCH] offsets saved");
-    return saveBenchOffsets(b);
+    const bool saved = saveBenchOffsets(b);
+    if (saved) logMsg(LOGLVL_INFO, "[BENCH] offsets saved"); else logMsg(LOGLVL_ERROR, "[BENCH] could not write offsets to flash");
+    return saved;
 }
 
 void LEDBlink(bool on, uint32_t lastBlinkMs, uint8_t type) {

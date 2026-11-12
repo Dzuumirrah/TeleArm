@@ -20,6 +20,7 @@ typedef uint8_t byte;
 #define INPUT 0
 #define OUTPUT 1
 #define INPUT_PULLUP 2
+#define INPUT_PULLDOWN 3
 #define HIGH 1
 #define LOW 0
 #ifndef PI

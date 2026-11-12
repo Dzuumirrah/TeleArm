@@ -12,3 +12,7 @@ esp_err_t esp_now_register_send_cb(esp_now_send_cb_t cb);
 esp_err_t esp_now_register_recv_cb(esp_now_recv_cb_t cb);
 esp_err_t esp_now_add_peer(const esp_now_peer_info_t *p);
 esp_err_t esp_now_send(const uint8_t *mac, const uint8_t *data, size_t len);
+
+// test controls (shim.cpp): outcome reported to the send callback, and ability to make esp_now_send itself fail
+extern bool g_shimAckOk;
+extern bool g_shimSendRejects;

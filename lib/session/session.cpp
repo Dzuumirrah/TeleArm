@@ -61,9 +61,10 @@ joints      humanJ = { 0, 0, 0 };
 xyzFloat    robotTarget;
 uint8_t     lastFlags = 0;
 bool        faultReported = false;
+uint32_t    lastStatusMs = 0;
 
 // ---------------------------------------------------------------------------------
-void say(const char *s) { Serial.print("[CAL] "); Serial.println(s); }
+void say(const char *s, LogLevel lv = LOGLVL_INFO) { logMsg(lv, "[CAL] %s", s); }
 
 void resetAcc() { memset(&acc, 0, sizeof(acc)); }
 
@@ -98,7 +99,7 @@ void clearSyncFlags(bool both) {
 }
 
 void abortCalibration(const char *why) {
-    say(why);
+    say(why, LOGLVL_WARN);
     state = ST_RUN;
     plan = PLAN_NONE;
 }
@@ -133,7 +134,7 @@ void startPlan(Plan p, uint32_t nowMs) {
 
 void saveAll() {
     cal.calUsedMag = (USE_MAG_9250 && cal.s9250.magValid) ? 1 : 0;
-    if (!saveCalibration(cal)) say("WARNING: could not write calibration to flash");
+    if (!saveCalibration(cal)) say("could not write calibration to flash - it will be lost at the next reboot", LOGLVL_ERROR);
 }
 
 // ---- end of a pose hold ------------------------------------------------------------
@@ -144,15 +145,15 @@ void finishHold(uint32_t nowMs) {
         if (!computeGyroBias((int)acc.n, acc.gsum[i], acc.gsq[i], CAL_STILL_GYRO_DPS, bias[i])) still = false;
     }
     if (!still) {                               // moved: average again
-        say("not still - hold the pose without moving");
+        say("not still - hold the pose without moving", LOGLVL_WARN);
         resetAcc();
         stateStartMs = nowMs;
         return;
     }
     for (int i = 0; i < 2; i++) {
         if (acc.tilt[i] / acc.n > CAL_SETTLE_TILT_DEG) {      // orientation filter has not converged yet
-            Serial.printf("[CAL] orientation filter still settling (tilt error %.1f / %.1f deg) - keep holding the pose\n",
-                          (float)(acc.tilt[0] / acc.n), (float)(acc.tilt[1] / acc.n));
+            logMsg(LOGLVL_WARN, "[CAL] orientation filter still settling (tilt error %.1f / %.1f deg) - keep holding the pose",
+                   (float)(acc.tilt[0] / acc.n), (float)(acc.tilt[1] / acc.n));
             resetAcc();
             stateStartMs = nowMs;
             return;
@@ -171,7 +172,7 @@ void finishHold(uint32_t nowMs) {
                 if (mat3MulVec(r, kb).z > -minDown) hanging = false;                               // world z is up
             }
             if (!hanging) {
-                say("QUICK refused: the arm must hang straight down (upper arm and forearm) - nothing was changed");
+                say("QUICK refused: the arm must hang straight down (upper arm and forearm) - nothing was changed", LOGLVL_WARN);
                 state = ST_RUN; plan = PLAN_NONE;
                 return;
             }
@@ -180,7 +181,7 @@ void finishHold(uint32_t nowMs) {
                 say("QUICK calibration done - forearm heading re-anchored");
             } else {
                 clearSyncFlags(false);
-                say("QUICK failed: was the arm really hanging straight down? try again");
+                say("QUICK failed: was the arm really hanging straight down? try again", LOGLVL_WARN);
             }
             state = ST_RUN; plan = PLAN_NONE;
             return;
@@ -201,7 +202,7 @@ void finishHold(uint32_t nowMs) {
         saveAll();
         say("FULL calibration done");
     } else {
-        say("FULL failed: pose 2 must be an arm raised straight forward (horizontal). try again");
+        say("FULL failed: pose 2 must be an arm raised straight forward (horizontal). try again", LOGLVL_WARN);
     }
     state = ST_RUN; plan = PLAN_NONE;
 }
@@ -250,7 +251,7 @@ void calibrationTick(uint32_t nowMs) {
     if (state == ST_CAL_COUNTDOWN) {
         const uint32_t el = nowMs - stateStartMs;
         const int left = (int)((CAL_COUNTDOWN_MS - (el < CAL_COUNTDOWN_MS ? el : CAL_COUNTDOWN_MS) + 999) / 1000);
-        if (left != lastCountdownPrint) { lastCountdownPrint = left; Serial.printf("[CAL] %d...\n", left); }
+        if (left != lastCountdownPrint) { lastCountdownPrint = left; logMsg(LOGLVL_INFO, "[CAL] %d...", left); }
         if (el >= CAL_COUNTDOWN_MS) { state = ST_CAL_HOLD; stateStartMs = nowMs; resetAcc(); say("hold still"); }
     } else if (state == ST_CAL_HOLD) {
         accumulate();
@@ -262,6 +263,31 @@ void calibrationTick(uint32_t nowMs) {
         }
         if (nowMs - stateStartMs >= MAG_CAL_MS || magN >= MAG_MAX_SAMPLES) finishMagCal(nowMs);
     }
+}
+
+// ---- heartbeat for the slave's serial monitor --------------------------------------------
+void statusTick() {
+    const uint32_t now = millis();
+    if (now - lastStatusMs < STATUS_PERIOD_MS) return;
+    lastStatusMs = now;
+    const ImuHardwareInfo h = imuHardwareInfo();
+    StatusPacket p;
+    memset(&p, 0, sizeof(p));
+    p.t_ms = now;
+    p.state = (uint8_t)state;
+    p.plan = (uint8_t)plan;
+    uint8_t hw = 0;
+    if (h.upperOk) hw |= HW_UPPER_OK;
+    if (h.foreOk) hw |= HW_FORE_OK;
+    if (h.upperIs9250) hw |= HW_UPPER_9250;
+    if (h.magOk) hw |= HW_MAG_OK;
+    if (cal.seg9250.valid && cal.seg6500.valid) hw |= HW_CAL_VALID;
+    if (IsMPUSynced()) hw |= HW_ANCHORED;
+    if (USE_MAG_9250 && cal.s9250.magValid) hw |= HW_MAG_USED;
+    if (h.benchLoaded) hw |= HW_BENCH_OK;
+    p.hw = hw;
+    p.flags = lastFlags;
+    ESPNowSendStatus(p);
 }
 
 // ---- run: orientation -> joint commands -----------------------------------------------
@@ -356,20 +382,22 @@ bool sessionBegin() {
     pinMode(vibration_motor, OUTPUT);
     digitalWrite(vibration_motor, LOW);          // vibration feedback postponed
 
+    logInit();
     bool ok = true;
     if (!MPUInit()) ok = false;
     if (!ESPNowInit()) ok = false;
+    logFlush(500);                               // boot messages out before the (blocking) bench-offset step
 
     // bench offsets: power on with the button held
     if (ok && digitalRead(btn_cal) == HIGH) {
         const uint32_t t0 = millis();
-        while (digitalRead(btn_cal) == HIGH && millis() - t0 < BTN_LONG_MS) delay(10);
+        while (digitalRead(btn_cal) == HIGH && millis() - t0 < BTN_LONG_MS) { logService(); delay(10); }
         if (digitalRead(btn_cal) == HIGH) {
             benchCalibrateIMUs();
             // gyro biases stored earlier were relative to the old offsets
             CalibrationData old;
             if (loadCalibration(old)) { old.s9250.gyroBias = xyzFloat(0, 0, 0); old.s6500.gyroBias = xyzFloat(0, 0, 0); saveCalibration(old); }
-            while (digitalRead(btn_cal) == LOW) delay(10);
+            while (digitalRead(btn_cal) == LOW) { logService(); delay(10); }
         }
     }
 
@@ -381,18 +409,21 @@ bool sessionBegin() {
         // heading anchoring across a reboot: only a magnetometer-referenced 9250 keeps it
         cal.seg9250.anchored = cal.calUsedMag && USE_MAG_9250 && cal.s9250.magValid && cal.seg9250.valid;
         cal.seg6500.anchored = false;
-        Serial.println(cal.seg9250.anchored
+        logMsg(LOGLVL_INFO, "%s", cal.seg9250.anchored
             ? "[CAL] calibration loaded - press the button briefly with the arm hanging straight down (QUICK)"
             : "[CAL] calibration loaded - heading reference lost: hold the button 2 s (FULL)");
     } else {
-        Serial.println("[CAL] no calibration stored: hold the button 2 s (FULL)");
+        logMsg(LOGLVL_WARN, "[CAL] no calibration stored: hold the button 2 s (FULL)");
     }
-    Serial.printf("[SESSION] %d Hz, send %d Hz, mag %s\n", SAMPLE_RATE_HZ, SEND_RATE_HZ,
-                  (USE_MAG_9250 && cal.s9250.magValid && magnetometerAvailable()) ? "on" : "off (6-axis)");
+    logMsg(LOGLVL_INFO, "[SESSION] %d Hz, send %d Hz, mag %s", SAMPLE_RATE_HZ, SEND_RATE_HZ,
+           (USE_MAG_9250 && cal.s9250.magValid && magnetometerAvailable()) ? "on" : "off (6-axis)");
+    if (!ok) logMsg(LOGLVL_ERROR, "[SESSION] start-up FAILED (see the messages above) - the loop keeps running and reports");
+    lastStatusMs = millis() - STATUS_PERIOD_MS;  // first heartbeat right away
     return ok;
 }
 
 void sessionStep() {
+    logService();                                 // remote log queue (rate limited inside); also while the IMUs fail
     const uint32_t nowUs = micros();
     if (!tickInit) { nextTickUs = nowUs; lastTickUs = nowUs - periodUs; tickInit = true; }
     if ((int32_t)(nowUs - nextTickUs) < 0) return;
@@ -407,14 +438,15 @@ void sessionStep() {
     const uint32_t nowMs = nowUs / 1000UL;
 
     pollButton(nowMs);
+    statusTick();
 
     if (!readIMUs(raw[0], raw[1])) {
         faultCooldown = FAULT_FLAG_TICKS;
-        if (++badReads == FAULT_TICKS && !faultReported) { faultReported = true; Serial.println("[IMU] read failures - transmission stopped (the slave must time out and hold)"); }
+        if (++badReads == FAULT_TICKS && !faultReported) { faultReported = true; logMsg(LOGLVL_ERROR, "[IMU] read failures - transmission stopped (the slave must time out and hold)"); }
         LEDBlink(true, nowMs, 2);  // blink fast on read failure
         return;                                   // nothing is sent from stale data; the filter state is kept
     }
-    if (badReads >= FAULT_TICKS) { Serial.println("[IMU] recovered"); faultReported = false; }
+    if (badReads >= FAULT_TICKS) { logMsg(LOGLVL_INFO, "[IMU] recovered"); faultReported = false; }
     badReads = 0;
     LEDBlink(false);  // LED off on successful read
 

@@ -92,6 +92,10 @@ static IMUData produce(Hist &h, const Mat3 &A, const Mat3 &M, const float bias[3
 
 bool MPUInit() { sim.initCalls++; return sim.mpuInitOk; }
 bool magnetometerAvailable() { return sim.magAvailable; }
+ImuHardwareInfo imuHardwareInfo() {
+    ImuHardwareInfo h; h.upperOk = h.foreOk = sim.mpuInitOk; h.upperIs9250 = sim.magAvailable; h.magOk = sim.magAvailable; h.benchLoaded = false;
+    return h;
+}
 bool benchCalibrateIMUs() { sim.benchCalls++; return true; }
 
 bool readIMUs(IMUData &imu9250, IMUData &imu6500) {
@@ -104,3 +108,4 @@ bool readIMUs(IMUData &imu9250, IMUData &imu6500) {
     imu6500 = produce(h6, sim.Afore, sim.M6, sim.gyroBias6, false, p2, 1);
     return true;
 }
+void LEDBlink(bool, uint32_t, uint8_t) {}
