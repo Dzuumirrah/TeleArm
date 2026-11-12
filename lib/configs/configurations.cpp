@@ -64,7 +64,7 @@ const float JOINT_MAX_DEG[3] = {  90.0f, 120.0f, 150.0f };
 const float MAX_JOINT_RATE_DPS = 180.0f;
 
 // ESP-NOW --------------------------------------------------
-const uint8_t SLAVE_MAC[6] = { 0xD4, 0x8A, 0xFC, 0x60, 0x49, 0xBC };
+const uint8_t SLAVE_MAC[6] = {0x5C, 0x01, 0x3B, 0x4B, 0x6B, 0x34};
 const uint8_t ESPNOW_CHANNEL = 1;
 
 // Remote monitor -------------------------------------------
