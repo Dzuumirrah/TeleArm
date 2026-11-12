@@ -13,7 +13,7 @@
 //    -> segmentOrientation (mount + heading anchoring)  -> Kurpath axis vectors
 //    -> fingertip position (P frame) -> robot target -> IK -> limits -> JointPacket (ESP-NOW)
 //
-//  Calibration (button on btn_cal, active LOW, released = action):
+//  Calibration (button on btn_cal, active HIGH, released = action):
 //    short press            QUICK  : pose 1, refresh gyro bias + re-anchor the 6500 heading to the 9250
 //    hold >= BTN_LONG_MS    FULL   : pose 1 then pose 2, stores mounting + heading anchoring
 //    hold >= BTN_VERYLONG_MS  MAG  : 20 s magnetometer rotation, then FULL

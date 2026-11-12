@@ -7,11 +7,11 @@ const int misoPin_6500 = 23;
 const int sckPin_6500 = 22;
 
 const int csPin_9250 = 27;
-const int mosiPin_9250 = 12;
+const int mosiPin_9250 = 33;    // previously 12
 const int misoPin_9250 = 14;
 const int sckPin_9250 = 13;
 
-const int btn_cal = 26;     //   
+const int btn_cal = 26;     //changed to pull down   
 const int vibration_motor = 25;
 const int LED_BUILTIN = 2;  // built-in led pin (for ESP32 DevKitC, GPIO 2)
 const int LED_BLINK_INT = 500;  // LED blink interval in milliseconds

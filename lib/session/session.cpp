@@ -234,7 +234,7 @@ void onRelease(uint32_t heldMs, uint32_t nowMs) {
 }
 
 void pollButton(uint32_t nowMs) {
-    const bool r = (digitalRead(btn_cal) == LOW);
+    const bool r = (digitalRead(btn_cal) == HIGH);
     if (r != btnRaw) { btnRaw = r; btnChangeMs = nowMs; }
     if (nowMs - btnChangeMs >= BTN_DEBOUNCE_MS && btnStable != btnRaw) {
         btnStable = btnRaw;
@@ -352,7 +352,7 @@ bool sessionBegin() {
     }
     periodUs = 1000000UL / (uint32_t)SAMPLE_RATE_HZ;
 
-    pinMode(btn_cal, INPUT_PULLUP);
+    pinMode(btn_cal, INPUT_PULLDOWN);
     pinMode(vibration_motor, OUTPUT);
     digitalWrite(vibration_motor, LOW);          // vibration feedback postponed
 
@@ -361,10 +361,10 @@ bool sessionBegin() {
     if (!ESPNowInit()) ok = false;
 
     // bench offsets: power on with the button held
-    if (ok && digitalRead(btn_cal) == LOW) {
+    if (ok && digitalRead(btn_cal) == HIGH) {
         const uint32_t t0 = millis();
-        while (digitalRead(btn_cal) == LOW && millis() - t0 < BTN_LONG_MS) delay(10);
-        if (digitalRead(btn_cal) == LOW) {
+        while (digitalRead(btn_cal) == HIGH && millis() - t0 < BTN_LONG_MS) delay(10);
+        if (digitalRead(btn_cal) == HIGH) {
             benchCalibrateIMUs();
             // gyro biases stored earlier were relative to the old offsets
             CalibrationData old;
