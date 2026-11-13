@@ -52,6 +52,7 @@ struct SerialShim {
     int printf(const char *fmt, ...) __attribute__((format(printf, 2, 3))) {
         va_list ap; va_start(ap, fmt); int r = vprintf(fmt, ap); va_end(ap); return r; }
     void flush() {}
+    size_t write(const uint8_t *b, size_t n);   // defined by the test that uses it (slave binary output)
     int available() { return 0; }
 };
 extern SerialShim Serial;

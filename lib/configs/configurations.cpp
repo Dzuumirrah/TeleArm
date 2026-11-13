@@ -77,3 +77,52 @@ const int      LINK_DOWN_FAILS = 3;
 
 // Debug ----------------------------------------------------
 const bool DEBUG_CSV = true;
+
+// ===================== Slave side =========================
+// Pins (Schematic_Slave rev 1.0) ----------------------------
+const int SLV_STEP_PIN[3]  = { 23, 18, 16 };    // U2, U3, U4 STEP
+const int SLV_DIR_PIN[3]   = { 19, 17,  4 };    // U2, U3, U4 DIR
+const int SLV_EN_PIN       = 32;                // A4988_EN (EN# bodge)
+const int SLV_LIMIT_PIN[3] = { 25, 26, 27 };    // LS1, LS2, LS3
+const int SLV_ESTOP_PIN    = 33;                // E_BTN
+const int SLV_I2C_SDA      = 21;                // AS-SDA
+const int SLV_I2C_SCL      = 22;                // AS-SCL
+const uint32_t SLV_I2C_HZ  = 400000;
+const uint8_t TCA9548A_ADDR = 0x70;
+const uint8_t SLV_ENC_MUX_CH[3] = { 0, 1, 2 };  // SD0/SC0 -> S1, SD1/SC1 -> S2, SD2/SC2 -> S3
+
+// Drive train (placeholders) --------------------------------
+const int   MOTOR_STEPS_PER_REV = 200;
+const int   MICROSTEPS = 16;
+const float GEAR_RATIO[3] = { 3.0f, 3.0f, 3.0f };                 // 20T motor gear -> 60T joint gear
+const float ENC_TURNS_PER_JOINT_TURN[3] = { 3.0f, 3.0f, 3.0f };   // AS5600 behind the motor (motor shaft)
+const bool  DIR_INVERT[3] = { false, false, false };
+
+// Homing (placeholders) -------------------------------------
+const int    HOME_ORDER[3]          = { 2, 1, 0 };                // elbow, shoulder, base
+const int8_t HOME_DIR[3]            = { -1, -1, -1 };
+const float  HOME_SWITCH_DEG[3]     = { -100.0f, -40.0f, -10.0f };
+const float  HOME_MAX_TRAVEL_DEG[3] = {  220.0f, 190.0f, 190.0f };
+const float  READY_DEG[3]           = {    0.0f,  30.0f, 120.0f }; // = robot work centre of cartesian.cpp
+const float  HOME_SEEK_DPS   = 15.0f;
+const float  HOME_LATCH_DPS  = 3.0f;
+const float  PARK_DPS        = 30.0f;
+const float  HOME_ACCEL_DPS2 = 100.0f;
+
+// Following the master ---------------------------------------
+const float    RUN_MAX_DPS      = 120.0f;
+const float    RUN_ACCEL_DPS2   = 300.0f;
+const uint32_t LINK_TIMEOUT_MS  = 300;
+const uint32_t ESTOP_RELEASE_MS = 1000;
+
+// AS5600 closed loop ----------------------------------------
+const float    ENC_RESYNC_DEG    = 0.8f;
+const uint32_t ENC_RESYNC_MS     = 200;
+const float    ENC_STALL_DEG     = 8.0f;
+const float    ENC_CHECK_MIN_DEG = 10.0f;
+const float    ENC_RATIO_TOL     = 0.25f;
+
+// PC serial output ------------------------------------------
+const bool     PC_OUTPUT_BINARY    = false;
+const uint32_t PC_TEXT_PERIOD_MS   = 100;
+const uint32_t PC_REPORT_PERIOD_MS = 20;
